@@ -4,16 +4,27 @@ import './VideoCall.css';
 
 const VideoCall = ({ userName, roomId, onLeave }) => {
   const [socket, setSocket] = useState(null);
-  const [remoteUsers, setRemoteUsers] = useState([]); 
+  const [remoteUsers, setRemoteUsers] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('Initializing Media...');
-  
+
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
 
+  // Chat States
+  const [messages, setMessages] = useState([]);
+  const [newMessage, setNewMessage] = useState('');
+  const [isChatOpen, setIsChatOpen] = useState(false);
+
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
-  const peersRef = useRef({}); 
-  const candidateQueues = useRef({}); 
+  const peersRef = useRef({});
+  const candidateQueues = useRef({});
+  const chatEndRef = useRef(null);
+
+  // Auto-scroll chat
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // 1. Setup Local Stream FIRST
   useEffect(() => {
@@ -22,7 +33,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        
+
         setConnectionStatus('Connecting to Room...');
         const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
         const newSocket = io(serverUrl);
@@ -33,9 +44,9 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
           newSocket.emit('join-room', { roomId, userName });
         });
 
-      } catch (e) { 
+      } catch (e) {
         console.error("Media error", e);
-        setConnectionStatus('Camera Error - Please Allow Permissions');
+        setConnectionStatus('Camera Error');
       }
     };
     getLocalStream();
@@ -45,13 +56,12 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     };
   }, [roomId, userName]);
 
-  // 2. Signaling Logic
+  // 2. Signaling & Chat Logic
   useEffect(() => {
     if (!socket) return;
 
     socket.on('all-users', (users) => {
       users.forEach(user => {
-        // Create user slot immediately
         setRemoteUsers(prev => [...prev, { socketId: user.socketId, userName: user.userName, stream: null }]);
         const pc = createPeer(user.socketId, user.userName, true);
         peersRef.current[user.socketId] = pc;
@@ -59,10 +69,13 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     });
 
     socket.on('user-joined', ({ socketId, userName }) => {
-      // Create user slot immediately
       setRemoteUsers(prev => [...prev, { socketId, userName, stream: null }]);
       const pc = createPeer(socketId, userName, false);
       peersRef.current[socketId] = pc;
+    });
+
+    socket.on('receive-message', (msg) => {
+      setMessages(prev => [...prev, msg]);
     });
 
     socket.on('offer', async ({ from, fromName, offer }) => {
@@ -111,6 +124,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     return () => {
       socket.off('all-users');
       socket.off('user-joined');
+      socket.off('receive-message');
       socket.off('offer');
       socket.off('answer');
       socket.off('ice-candidate');
@@ -153,6 +167,14 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     return pc;
   };
 
+  const sendMessage = (e) => {
+    e.preventDefault();
+    if (newMessage.trim() && socket) {
+      socket.emit('send-message', { text: newMessage, senderName: userName });
+      setNewMessage('');
+    }
+  };
+
   const toggleMic = () => {
     if (localStreamRef.current) {
       const audioTrack = localStreamRef.current.getAudioTracks()[0];
@@ -181,25 +203,73 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
 
   return (
     <div className="video-call-container">
-      <div className="header-info">
-        <h1>Video Call Pro</h1>
-        <div className="status-bar">{connectionStatus}</div>
-      </div>
+      <div className="main-content">
+        <div className="video-section">
+          <div className="videos-grid">
+            {/* Local Video */}
+            <div className="video-wrapper">
+              <div className="video-header"><h3>You ({userName})</h3></div>
+              <video ref={localVideoRef} autoPlay muted playsInline />
+            </div>
 
-      <div className="videos-grid">
-        <div className="video-wrapper">
-          <div className="video-header"><h3>You ({userName})</h3></div>
-          <video ref={localVideoRef} autoPlay muted playsInline />
-          <div className="controls-bar">
-            <button className={`control-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>{isMicOn ? '🎤' : '🔇'}</button>
-            <button className={`control-btn ${!isVideoOn ? 'off' : ''}`} onClick={toggleVideo}>{isVideoOn ? '📹' : '❌'}</button>
-            <button className="control-btn end" onClick={handleLeave}>📞</button>
+            {/* Remote Videos */}
+            {remoteUsers.map(user => (
+              <RemoteVideo key={user.socketId} user={user} />
+            ))}
           </div>
         </div>
 
-        {remoteUsers.map(user => (
-          <RemoteVideo key={user.socketId} user={user} />
-        ))}
+        {/* Chat Sidebar */}
+        {isChatOpen && (
+          <div className="chat-sidebar">
+            <div className="chat-header">
+              <h3>In-call messages</h3>
+              <button className="close-chat" onClick={() => setIsChatOpen(false)}>✕</button>
+            </div>
+            <div className="chat-messages">
+              {messages.map((msg, i) => (
+                <div key={i} className={`message ${msg.senderName === userName ? 'own' : ''}`}>
+                  <div className="message-info">{msg.senderName} • {msg.timestamp}</div>
+                  <div className="message-text">{msg.text}</div>
+                </div>
+              ))}
+              <div ref={chatEndRef} />
+            </div>
+            <form className="chat-input-area" onSubmit={sendMessage}>
+              <input
+                type="text"
+                placeholder="Send a message"
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+              />
+              <button type="submit" className="send-btn">➤</button>
+            </form>
+          </div>
+        )}
+      </div>
+
+      {/* Footer Controls */}
+      <div className="footer-bar">
+        <div className="room-info-footer">
+          {connectionStatus}
+        </div>
+        <div className="center-controls">
+          <button className={`footer-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>
+            {isMicOn ? '🎤' : '🔇'}
+          </button>
+          <button className={`footer-btn ${!isVideoOn ? 'off' : ''}`} onClick={toggleVideo}>
+            {isVideoOn ? '📹' : '❌'}
+          </button>
+          <button className="footer-btn end" onClick={handleLeave}>📞</button>
+        </div>
+        <div className="right-controls">
+          <button
+            className={`footer-btn ${isChatOpen ? 'active' : ''}`}
+            onClick={() => setIsChatOpen(!isChatOpen)}
+          >
+            💬
+          </button>
+        </div>
       </div>
     </div>
   );
