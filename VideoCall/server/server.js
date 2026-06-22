@@ -14,14 +14,12 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// In-memory storage for rooms and users
 const rooms = {}; // { roomId: { socketId: userName } }
 const socketToRoom = {}; // { socketId: roomId }
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Join a room
   socket.on('join-room', ({ roomId, userName }) => {
     if (rooms[roomId]) {
       rooms[roomId][socket.id] = userName;
@@ -31,23 +29,28 @@ io.on('connection', (socket) => {
     socketToRoom[socket.id] = roomId;
     socket.join(roomId);
 
-    // Get other users in the room
     const otherUsers = Object.entries(rooms[roomId])
       .filter(([id]) => id !== socket.id)
       .map(([id, name]) => ({ socketId: id, userName: name }));
 
     socket.emit('all-users', otherUsers);
-
-    // Notify others that a new user joined
-    socket.to(roomId).emit('user-joined', {
-      socketId: socket.id,
-      userName
-    });
-
-    console.log(`User ${userName} (${socket.id}) joined room: ${roomId}`);
+    socket.to(roomId).emit('user-joined', { socketId: socket.id, userName });
   });
 
-  // Signaling relay
+  // Chat message handling
+  socket.on('send-message', (data) => {
+    const roomId = socketToRoom[socket.id];
+    if (roomId) {
+      // Broadcast message to everyone in the room including the sender
+      io.to(roomId).emit('receive-message', {
+        text: data.text,
+        senderId: socket.id,
+        senderName: data.senderName,
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      });
+    }
+  });
+
   socket.on('offer', (data) => {
     io.to(data.to).emit('offer', {
       from: socket.id,
@@ -57,34 +60,23 @@ io.on('connection', (socket) => {
   });
 
   socket.on('answer', (data) => {
-    io.to(data.to).emit('answer', {
-      from: socket.id,
-      answer: data.answer
-    });
+    io.to(data.to).emit('answer', { from: socket.id, answer: data.answer });
   });
 
   socket.on('ice-candidate', (data) => {
-    io.to(data.to).emit('ice-candidate', {
-      from: socket.id,
-      candidate: data.candidate
-    });
+    io.to(data.to).emit('ice-candidate', { from: socket.id, candidate: data.candidate });
   });
 
-  // Disconnect handling
   socket.on('disconnect', () => {
     const roomId = socketToRoom[socket.id];
     if (roomId && rooms[roomId]) {
       delete rooms[roomId][socket.id];
-      if (Object.keys(rooms[roomId]).length === 0) {
-        delete rooms[roomId];
-      }
+      if (Object.keys(rooms[roomId]).length === 0) delete rooms[roomId];
       socket.to(roomId).emit('user-left', socket.id);
     }
     delete socketToRoom[socket.id];
-    console.log('User disconnected:', socket.id);
   });
 
-  // Manual leave
   socket.on('leave-room', () => {
     const roomId = socketToRoom[socket.id];
     if (roomId && rooms[roomId]) {
