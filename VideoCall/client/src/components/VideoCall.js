@@ -4,96 +4,113 @@ import './VideoCall.css';
 
 const VideoCall = ({ userName, roomId, onLeave }) => {
   const [socket, setSocket] = useState(null);
-  const [remoteUsers, setRemoteUsers] = useState([]); 
-  const [connectionStatus, setConnectionStatus] = useState('Initializing Media...');
-  
+  const [remoteUsers, setRemoteUsers] = useState([]);
+  const [connectionStatus, setConnectionStatus] = useState('Connecting...');
+
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
 
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
-  const peersRef = useRef({}); 
-  const candidateQueues = useRef({}); 
+  const peersRef = useRef({});
+  const candidateQueues = useRef({});
 
-  // 1. Setup Local Stream FIRST
+  // Initialize Socket
+  useEffect(() => {
+    const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
+    const newSocket = io(serverUrl);
+    setSocket(newSocket);
+
+    newSocket.on('connect', () => {
+      setConnectionStatus('Room: ' + roomId);
+      newSocket.emit('join-room', { roomId, userName });
+    });
+
+    return () => newSocket.disconnect();
+  }, [roomId, userName]);
+
+  // Setup Local Stream
   useEffect(() => {
     const getLocalStream = async () => {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
         localStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-        setConnectionStatus('Connecting to Server...');
-        initSocket(); // Only connect to socket AFTER stream is ready
-      } catch (e) { 
+      } catch (e) {
         console.error("Media error", e);
-        setConnectionStatus('Camera Error - Please Allow Permissions');
+        setConnectionStatus('Camera Error');
       }
     };
     getLocalStream();
-
-    return () => {
-        if (localStreamRef.current) {
-            localStreamRef.current.getTracks().forEach(t => t.stop());
-        }
-    };
   }, []);
 
-  const initSocket = () => {
-    const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
-    const newSocket = io(serverUrl);
-    setSocket(newSocket);
-
-    newSocket.on('connect', () => {
-      setConnectionStatus('In Room: ' + roomId);
-      newSocket.emit('join-room', { roomId, userName });
-    });
-  };
-
-  // 2. Signaling Logic
+  // Signaling Logic
   useEffect(() => {
     if (!socket) return;
 
+    // 1. New user joins and gets all current users. New user is the CALLER.
     socket.on('all-users', (users) => {
       users.forEach(user => {
+        console.log("Initiating call to existing user:", user.userName);
         const pc = createPeer(user.socketId, user.userName, true);
         peersRef.current[user.socketId] = pc;
       });
     });
 
+    // 2. Existing users get notification of new user. They are the RECEIVERS.
     socket.on('user-joined', ({ socketId, userName }) => {
+      console.log("New user joined room:", userName);
       const pc = createPeer(socketId, userName, false);
       peersRef.current[socketId] = pc;
     });
 
     socket.on('offer', async ({ from, fromName, offer }) => {
+      console.log("Received offer from:", fromName);
       let pc = peersRef.current[from];
       if (!pc) {
         pc = createPeer(from, fromName, false);
         peersRef.current[from] = pc;
       }
+
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+        // Process queued candidates
         if (candidateQueues.current[from]) {
           while (candidateQueues.current[from].length > 0) {
             const cand = candidateQueues.current[from].shift();
             await pc.addIceCandidate(new RTCIceCandidate(cand));
           }
         }
+
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('answer', { to: from, answer });
-      } catch (err) { console.error("Offer error", err); }
+      } catch (err) {
+        console.error("Error handling offer:", err);
+      }
     });
 
     socket.on('answer', async ({ from, answer }) => {
+      console.log("Received answer from:", from);
       const pc = peersRef.current[from];
-      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
+      if (pc) {
+        try {
+          await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        } catch (err) {
+          console.error("Error handling answer:", err);
+        }
+      }
     });
 
     socket.on('ice-candidate', async ({ from, candidate }) => {
       const pc = peersRef.current[from];
       if (pc?.remoteDescription) {
-        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch (e) {}
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(candidate));
+        } catch (e) {
+          console.error("Error adding candidate:", e);
+        }
       } else {
         if (!candidateQueues.current[from]) candidateQueues.current[from] = [];
         candidateQueues.current[from].push(candidate);
@@ -101,6 +118,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     });
 
     socket.on('user-left', (socketId) => {
+      console.log("User left:", socketId);
       if (peersRef.current[socketId]) {
         peersRef.current[socketId].close();
         delete peersRef.current[socketId];
@@ -124,36 +142,52 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
         { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-        { urls: 'turn:openrelay.metered.ca:3478', username: 'openrelayproject', credential: 'openrelayproject' }
+        { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' }
       ]
     });
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) socket.emit('ice-candidate', { to: targetSocketId, candidate: e.candidate });
+      if (e.candidate) {
+        socket.emit('ice-candidate', { to: targetSocketId, candidate: e.candidate });
+      }
     };
 
     pc.ontrack = (e) => {
+      console.log(`Received track from ${remoteName}`);
       setRemoteUsers(prev => {
         const existing = prev.find(u => u.socketId === targetSocketId);
-        if (existing) return prev.map(u => u.socketId === targetSocketId ? { ...u, stream: e.streams[0] } : u);
+        if (existing) {
+          // If track changes or extra track added, update stream
+          return prev.map(u => u.socketId === targetSocketId ? { ...u, stream: e.streams[0] } : u);
+        }
         return [...prev, { socketId: targetSocketId, userName: remoteName, stream: e.streams[0] }];
       });
     };
 
+    // Add local tracks
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
     }
 
+    // Only the CALLER initiates the offer
     if (isCaller) {
       pc.onnegotiationneeded = async () => {
         try {
           const offer = await pc.createOffer();
           await pc.setLocalDescription(offer);
           socket.emit('offer', { to: targetSocketId, roomId, offer });
-        } catch (err) { console.error("Negotiation error", err); }
+        } catch (err) {
+          console.error("Negotiation error:", err);
+        }
       };
     }
+
+    pc.onconnectionstatechange = () => {
+      console.log(`Connection to ${remoteName}: ${pc.connectionState}`);
+      if (pc.connectionState === 'failed') {
+        // Simple retry logic could go here
+      }
+    };
 
     return pc;
   };
@@ -181,6 +215,10 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
   const handleLeave = () => {
     if (socket) socket.emit('leave-room');
     Object.values(peersRef.current).forEach(pc => pc.close());
+    peersRef.current = {};
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+    }
     onLeave();
   };
 
@@ -192,16 +230,24 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
       </div>
 
       <div className="videos-grid">
+        {/* Local Video */}
         <div className="video-wrapper">
-          <div className="video-header"><h3>You ({userName})</h3></div>
+          <div className="video-header">
+            <h3>You ({userName})</h3>
+          </div>
           <video ref={localVideoRef} autoPlay muted playsInline />
           <div className="controls-bar">
-            <button className={`control-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>{isMicOn ? '🎤' : '🔇'}</button>
-            <button className={`control-btn ${!isVideoOn ? 'off' : ''}`} onClick={toggleVideo}>{isVideoOn ? '📹' : '❌'}</button>
+            <button className={`control-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>
+              {isMicOn ? '🎤' : '🔇'}
+            </button>
+            <button className={`control-btn ${!isVideoOn ? 'off' : ''}`} onClick={toggleVideo}>
+              {isVideoOn ? '📹' : '❌'}
+            </button>
             <button className="control-btn end" onClick={handleLeave}>📞</button>
           </div>
         </div>
 
+        {/* Remote Videos */}
         {remoteUsers.map(user => (
           <RemoteVideo key={user.socketId} user={user} />
         ))}
@@ -212,16 +258,18 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
 
 const RemoteVideo = ({ user }) => {
   const videoRef = useRef();
+
   useEffect(() => {
     if (videoRef.current && user.stream) {
       videoRef.current.srcObject = user.stream;
-      videoRef.current.play().catch(() => {}); // Force play for mobile browsers
     }
   }, [user.stream]);
 
   return (
     <div className="video-wrapper">
-      <div className="video-header"><h3>{user.userName}</h3></div>
+      <div className="video-header">
+        <h3>{user.userName}</h3>
+      </div>
       <video ref={videoRef} autoPlay playsInline />
     </div>
   );
