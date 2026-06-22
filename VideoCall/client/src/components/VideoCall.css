@@ -136,9 +136,40 @@ body {
   z-index: 100;
 }
 
-.room-info-footer {
-  font-size: 0.9rem;
-  color: var(--text-muted);
+.left-info {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.user-count-badge {
+  background: #333;
+  padding: 4px 12px;
+  border-radius: 12px;
+  font-size: 0.85rem;
+  color: var(--text-color);
+  border: 1px solid #444;
+}
+
+.chat-toggle-btn {
+  position: relative;
+}
+
+.unread-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: var(--danger-color);
+  color: white;
+  font-size: 0.7rem;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  font-weight: bold;
+  border: 2px solid #1a1a1a;
 }
 
 .center-controls {
@@ -202,9 +233,15 @@ h1 {
   overflow: hidden;
   position: relative;
   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-  aspect-ratio: 4/3;
   display: flex;
   flex-direction: column;
+}
+
+/* On Desktop: keep widescreen aspect ratio */
+@media (min-width: 801px) {
+  .video-wrapper {
+    aspect-ratio: 16/9;
+  }
 }
 
 .video-header {
@@ -228,7 +265,8 @@ h1 {
 video {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  /* CHANGED object-fit: contain to ensure full video is visible without cropping */
+  object-fit: contain;
   background: #000;
 }
 
@@ -238,12 +276,13 @@ video {
   }
 
   .videos-grid {
-    grid-template-columns: 1fr 1fr; /* 2 columns on mobile */
+    grid-template-columns: 1fr 1fr;
     gap: 10px;
   }
 
   .video-wrapper {
-    aspect-ratio: 3/4; /* More vertical for mobile */
+    /* Fixed height or flexible aspect ratio for mobile */
+    min-height: 200px;
   }
 
   .video-header h3 {
@@ -256,7 +295,7 @@ video {
   }
 
   .room-info-footer {
-    display: none; /* Hide room ID to save space */
+    display: none;
   }
 
   .footer-btn {
@@ -266,7 +305,7 @@ video {
   }
 
   .chat-sidebar {
-    width: 100%; /* Full screen chat on mobile */
+    width: 100%;
     height: 100%;
     position: fixed;
     top: 0;
@@ -277,6 +316,11 @@ video {
 
 @media (max-width: 480px) {
   .videos-grid {
-    grid-template-columns: 1fr; /* 1 column on very small phones */
+    grid-template-columns: 1fr;
+  }
+
+  .video-wrapper {
+    aspect-ratio: auto;
+    height: 300px;
   }
 }
