@@ -14,6 +14,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const localVideoRef = useRef(null);
   const localStreamRef = useRef(null);
@@ -26,6 +27,13 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Reset unread count when chat is opened
+  useEffect(() => {
+    if (isChatOpen) {
+      setUnreadCount(0);
+    }
+  }, [isChatOpen]);
+
   // 1. Setup Local Stream FIRST
   useEffect(() => {
     const getLocalStream = async () => {
@@ -34,7 +42,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         localStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-        setConnectionStatus('Connecting to Room...');
+        setConnectionStatus('Connecting...');
         const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
         const newSocket = io(serverUrl);
         setSocket(newSocket);
@@ -76,6 +84,10 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
 
     socket.on('receive-message', (msg) => {
       setMessages(prev => [...prev, msg]);
+      // Increment unread count if chat is closed and message is not from self
+      if (!isChatOpen && msg.senderName !== userName) {
+        setUnreadCount(prev => prev + 1);
+      }
     });
 
     socket.on('offer', async ({ from, fromName, offer }) => {
@@ -130,7 +142,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
       socket.off('ice-candidate');
       socket.off('user-left');
     };
-  }, [socket]);
+  }, [socket, isChatOpen, userName]);
 
   const createPeer = (targetSocketId, remoteName, isCaller) => {
     const pc = new RTCPeerConnection({
@@ -250,8 +262,9 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
 
       {/* Footer Controls */}
       <div className="footer-bar">
-        <div className="room-info-footer">
-          {connectionStatus}
+        <div className="left-info">
+          <div className="room-info-footer">{connectionStatus}</div>
+          <div className="user-count-badge">👥 {remoteUsers.length + 1}</div>
         </div>
         <div className="center-controls">
           <button className={`footer-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>
@@ -264,10 +277,11 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         </div>
         <div className="right-controls">
           <button
-            className={`footer-btn ${isChatOpen ? 'active' : ''}`}
+            className={`footer-btn chat-toggle-btn ${isChatOpen ? 'active' : ''}`}
             onClick={() => setIsChatOpen(!isChatOpen)}
           >
             💬
+            {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
           </button>
         </div>
       </div>
