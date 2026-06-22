@@ -8,6 +8,7 @@ const VideoCall = ({ userId }) => {
   const [callInProgress, setCallInProgress] = useState(false);
   const [remoteSocketId, setRemoteSocketId] = useState(null);
   const [incomingCall, setIncomingCall] = useState(null);
+  const [remoteStream, setRemoteStream] = useState(null);
 
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -18,6 +19,13 @@ const VideoCall = ({ userId }) => {
   useEffect(() => {
     remoteSocketIdRef.current = remoteSocketId;
   }, [remoteSocketId]);
+
+  // Sync remote stream to video element
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
+    }
+  }, [remoteStream, callInProgress]);
 
   // Initialize Socket.io
   useEffect(() => {
@@ -40,7 +48,7 @@ const VideoCall = ({ userId }) => {
     newSocket.on('user-left', (socketId) => {
       setOnlineUsers((prev) => prev.filter((u) => u.socketId !== socketId));
       if (remoteSocketIdRef.current === socketId) {
-        endCall();
+        cleanupCall();
       }
     });
 
@@ -95,29 +103,41 @@ const VideoCall = ({ userId }) => {
     });
 
     socket.on('call-ended', () => {
-      handleRemoteHangup();
+      cleanupCall();
     });
   }, [socket]);
 
   // Initialize Peer Connection
   const initializePeerConnection = (targetSocketId) => {
     const peerConn = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      iceServers: [
+        { urls: 'stun:stun.l.google.com:19302' },
+        { urls: 'stun:stun1.l.google.com:19302' },
+        // FREE TURN SERVER (Relays data when direct connection fails)
+        {
+          urls: 'turn:openrelay.metered.ca:80',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        },
+        {
+          urls: 'turn:openrelay.metered.ca:443',
+          username: 'openrelayproject',
+          credential: 'openrelayproject'
+        }
+      ]
     });
 
-    // Add local stream
-    const stream = localVideoRef.current.srcObject;
-    if (stream) {
-      stream.getTracks().forEach((track) => {
-        peerConn.addTrack(track, stream);
+    // Add local tracks
+    const localStream = localVideoRef.current?.srcObject;
+    if (localStream) {
+      localStream.getTracks().forEach((track) => {
+        peerConn.addTrack(track, localStream);
       });
     }
 
-    // Handle remote stream
+    // Handle remote tracks
     peerConn.ontrack = (event) => {
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = event.streams[0];
-      }
+      setRemoteStream(event.streams[0]);
     };
 
     // Handle ICE candidates
@@ -130,12 +150,11 @@ const VideoCall = ({ userId }) => {
       }
     };
 
-    // Handle connection state changes
     peerConn.onconnectionstatechange = () => {
       if (peerConn.connectionState === 'disconnected' ||
           peerConn.connectionState === 'failed' ||
           peerConn.connectionState === 'closed') {
-        handleRemoteHangup();
+        cleanupCall();
       }
     };
 
@@ -146,12 +165,10 @@ const VideoCall = ({ userId }) => {
   const initiateCall = async (targetSocketId) => {
     setRemoteSocketId(targetSocketId);
     setCallInProgress(true);
-
     initializePeerConnection(targetSocketId);
 
     const offer = await peerConnection.current.createOffer();
     await peerConnection.current.setLocalDescription(offer);
-
     socket.emit('offer', { to: targetSocketId, offer });
   };
 
@@ -170,17 +187,14 @@ const VideoCall = ({ userId }) => {
 
     const answer = await peerConnection.current.createAnswer();
     await peerConnection.current.setLocalDescription(answer);
-
     socket.emit('answer', { to: from, answer });
   };
 
   // Reject call
   const rejectCall = () => {
     setIncomingCall(null);
-    // Optionally notify the caller that the call was rejected
   };
 
-  // End call (Local)
   const endCall = () => {
     if (socket && remoteSocketIdRef.current) {
       socket.emit('end-call', { to: remoteSocketIdRef.current });
@@ -188,12 +202,6 @@ const VideoCall = ({ userId }) => {
     cleanupCall();
   };
 
-  // Handle remote side hanging up
-  const handleRemoteHangup = () => {
-    cleanupCall();
-  };
-
-  // Shared cleanup logic
   const cleanupCall = () => {
     if (peerConnection.current) {
       peerConnection.current.close();
@@ -201,9 +209,7 @@ const VideoCall = ({ userId }) => {
     }
     setCallInProgress(false);
     setRemoteSocketId(null);
-    if (remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = null;
-    }
+    setRemoteStream(null);
   };
 
   return (
@@ -211,26 +217,15 @@ const VideoCall = ({ userId }) => {
       <h1>Video Call App</h1>
 
       <div className="videos-grid">
-        {/* Local Video */}
         <div className="video-wrapper">
           <h3>You ({userId})</h3>
-          <video
-            ref={localVideoRef}
-            autoPlay
-            muted
-            playsInline
-          />
+          <video ref={localVideoRef} autoPlay muted playsInline />
         </div>
 
-        {/* Remote Video */}
         {callInProgress && (
           <div className="video-wrapper">
             <h3>Remote User</h3>
-            <video
-              ref={remoteVideoRef}
-              autoPlay
-              playsInline
-            />
+            <video ref={remoteVideoRef} autoPlay playsInline />
             <button onClick={endCall} className="end-call-btn" style={{ marginTop: '10px' }}>
               End Call
             </button>
@@ -238,7 +233,6 @@ const VideoCall = ({ userId }) => {
         )}
       </div>
 
-      {/* Incoming Call Notification */}
       {incomingCall && (
         <div className="incoming-call-overlay">
           <div className="incoming-call-modal">
@@ -251,7 +245,6 @@ const VideoCall = ({ userId }) => {
         </div>
       )}
 
-      {/* Online Users List */}
       {!callInProgress && (
         <div className="online-users-list">
           <h3>Online Users</h3>
