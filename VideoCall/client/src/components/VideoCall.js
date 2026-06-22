@@ -20,11 +20,11 @@ const VideoCall = ({ userId }) => {
     remoteSocketIdRef.current = remoteSocketId;
   }, [remoteSocketId]);
 
+  // This ensures the remote video starts playing as soon as the stream arrives
   useEffect(() => {
     if (remoteStream && remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
-      // Try to force play
-      remoteVideoRef.current.play().catch(e => console.log("Play error:", e));
+      remoteVideoRef.current.play().catch(e => console.log("Playback error:", e));
     }
   }, [remoteStream, callInProgress]);
 
@@ -89,8 +89,8 @@ const VideoCall = ({ userId }) => {
       if (data.candidate && peerConnection.current) {
         try {
           await peerConnection.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (error) {
-          console.error('Error adding ICE candidate:', error);
+        } catch (e) {
+          console.error("ICE error", e);
         }
       }
     });
@@ -101,13 +101,10 @@ const VideoCall = ({ userId }) => {
   }, [socket]);
 
   const initializePeerConnection = (targetSocketId) => {
-    const peerConn = new RTCPeerConnection({
+    const pc = new RTCPeerConnection({
       iceServers: [
         { urls: 'stun:stun.l.google.com:19302' },
         { urls: 'stun:stun1.l.google.com:19302' },
-        { urls: 'stun:stun2.l.google.com:19302' },
-        { urls: 'stun:stun3.l.google.com:19302' },
-        { urls: 'stun:stun4.l.google.com:19302' },
         {
           urls: 'turn:openrelay.metered.ca:80',
           username: 'openrelayproject',
@@ -116,19 +113,18 @@ const VideoCall = ({ userId }) => {
       ]
     });
 
-    const localStream = localVideoRef.current?.srcObject;
-    if (localStream) {
-      localStream.getTracks().forEach((track) => {
-        peerConn.addTrack(track, localStream);
-      });
-    }
-
-    peerConn.ontrack = (event) => {
-      console.log("Received remote track");
+    pc.ontrack = (event) => {
       setRemoteStream(event.streams[0]);
     };
 
-    peerConn.onicecandidate = (event) => {
+    const localStream = localVideoRef.current?.srcObject;
+    if (localStream) {
+      localStream.getTracks().forEach((track) => {
+        pc.addTrack(track, localStream);
+      });
+    }
+
+    pc.onicecandidate = (event) => {
       if (event.candidate) {
         socket.emit('ice-candidate', {
           to: targetSocketId,
@@ -137,22 +133,20 @@ const VideoCall = ({ userId }) => {
       }
     };
 
-    peerConn.onconnectionstatechange = () => {
-      setConnectionStatus(peerConn.connectionState);
-      if (peerConn.connectionState === 'failed' || peerConn.connectionState === 'closed') {
-        cleanupCall();
-      }
+    pc.onconnectionstatechange = () => {
+      setConnectionStatus(pc.connectionState);
     };
 
-    peerConnection.current = peerConn;
+    peerConnection.current = pc;
+    return pc;
   };
 
   const initiateCall = async (targetSocketId) => {
     setRemoteSocketId(targetSocketId);
     setCallInProgress(true);
-    initializePeerConnection(targetSocketId);
-    const offer = await peerConnection.current.createOffer();
-    await peerConnection.current.setLocalDescription(offer);
+    const pc = initializePeerConnection(targetSocketId);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
     socket.emit('offer', { to: targetSocketId, offer });
   };
 
@@ -161,10 +155,10 @@ const VideoCall = ({ userId }) => {
     setRemoteSocketId(from);
     setCallInProgress(true);
     setIncomingCall(null);
-    initializePeerConnection(from);
-    await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.current.createAnswer();
-    await peerConnection.current.setLocalDescription(answer);
+    const pc = initializePeerConnection(from);
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
     socket.emit('answer', { to: from, answer });
   };
 
@@ -191,7 +185,7 @@ const VideoCall = ({ userId }) => {
   return (
     <div className="video-call-container">
       <h1>Video Call App</h1>
-      {connectionStatus && <p>Status: <strong>{connectionStatus}</strong></p>}
+      {connectionStatus && <p style={{color: 'green'}}>Connection: {connectionStatus}</p>}
 
       <div className="videos-grid">
         <div className="video-wrapper">
@@ -202,8 +196,9 @@ const VideoCall = ({ userId }) => {
         {callInProgress && (
           <div className="video-wrapper">
             <h3>Remote User</h3>
+            {/* Added muted temporarily to help auto-play work */}
             <video ref={remoteVideoRef} autoPlay playsInline muted />
-            <p style={{fontSize: '12px'}}>Note: Remote audio is muted by default</p>
+            <p style={{fontSize: '10px'}}>Remote video muted for auto-play</p>
             <button onClick={endCall} className="end-call-btn" style={{ marginTop: '10px' }}>
               End Call
             </button>
@@ -231,9 +226,7 @@ const VideoCall = ({ userId }) => {
               {onlineUsers.map((user) => (
                 <li key={user.socketId}>
                   <span>{user.userId}</span>
-                  <button onClick={() => initiateCall(user.socketId)} disabled={callInProgress || incomingCall}>
-                    Call
-                  </button>
+                  <button onClick={() => initiateCall(user.socketId)}>Call</button>
                 </li>
               ))}
             </ul>
