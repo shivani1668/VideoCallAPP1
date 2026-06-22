@@ -5,7 +5,7 @@ import './VideoCall.css';
 const VideoCall = ({ userName, roomId, onLeave }) => {
   const [socket, setSocket] = useState(null);
   const [remoteUsers, setRemoteUsers] = useState([]); 
-  const [connectionStatus, setConnectionStatus] = useState('Initializing Camera...');
+  const [connectionStatus, setConnectionStatus] = useState('Initializing Media...');
   
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
@@ -23,7 +23,6 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         localStreamRef.current = stream;
         if (localVideoRef.current) localVideoRef.current.srcObject = stream;
         
-        // ONLY connect to socket after the stream is ready
         setConnectionStatus('Connecting to Room...');
         const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
         const newSocket = io(serverUrl);
@@ -36,7 +35,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
 
       } catch (e) { 
         console.error("Media error", e);
-        setConnectionStatus('Camera Error - Please Refresh and Allow Camera');
+        setConnectionStatus('Camera Error - Please Allow Permissions');
       }
     };
     getLocalStream();
@@ -46,18 +45,22 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     };
   }, [roomId, userName]);
 
-  // 2. Signaling Logic (Only runs after socket is set)
+  // 2. Signaling Logic
   useEffect(() => {
     if (!socket) return;
 
     socket.on('all-users', (users) => {
       users.forEach(user => {
+        // Create user slot immediately
+        setRemoteUsers(prev => [...prev, { socketId: user.socketId, userName: user.userName, stream: null }]);
         const pc = createPeer(user.socketId, user.userName, true);
         peersRef.current[user.socketId] = pc;
       });
     });
 
     socket.on('user-joined', ({ socketId, userName }) => {
+      // Create user slot immediately
+      setRemoteUsers(prev => [...prev, { socketId, userName, stream: null }]);
       const pc = createPeer(socketId, userName, false);
       peersRef.current[socketId] = pc;
     });
@@ -79,14 +82,12 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('answer', { to: from, answer });
-      } catch (err) { console.error("Offer handling error", err); }
+      } catch (err) { console.error("Offer error", err); }
     });
 
     socket.on('answer', async ({ from, answer }) => {
       const pc = peersRef.current[from];
-      if (pc) {
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-      }
+      if (pc) await pc.setRemoteDescription(new RTCSessionDescription(answer));
     });
 
     socket.on('ice-candidate', async ({ from, candidate }) => {
@@ -132,14 +133,9 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     };
 
     pc.ontrack = (e) => {
-      setRemoteUsers(prev => {
-        const existing = prev.find(u => u.socketId === targetSocketId);
-        if (existing) return prev.map(u => u.socketId === targetSocketId ? { ...u, stream: e.streams[0] } : u);
-        return [...prev, { socketId: targetSocketId, userName: remoteName, stream: e.streams[0] }];
-      });
+      setRemoteUsers(prev => prev.map(u => u.socketId === targetSocketId ? { ...u, stream: e.streams[0] } : u));
     };
 
-    // Add local tracks (guaranteed to be ready now)
     if (localStreamRef.current) {
       localStreamRef.current.getTracks().forEach(t => pc.addTrack(t, localStreamRef.current));
     }
@@ -220,6 +216,7 @@ const RemoteVideo = ({ user }) => {
   return (
     <div className="video-wrapper">
       <div className="video-header"><h3>{user.userName}</h3></div>
+      {!user.stream && <div className="loading-spinner">Connecting Video...</div>}
       <video ref={videoRef} autoPlay playsInline />
     </div>
   );
