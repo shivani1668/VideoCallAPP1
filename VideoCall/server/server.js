@@ -37,16 +37,23 @@ io.on('connection', (socket) => {
     socket.to(roomId).emit('user-joined', { socketId: socket.id, userName });
   });
 
-  // Chat message handling
+  // Chat message handling with IST Timestamp
   socket.on('send-message', (data) => {
     const roomId = socketToRoom[socket.id];
     if (roomId) {
-      // Broadcast message to everyone in the room including the sender
+      // Force Indian Standard Time (IST)
+      const istTime = new Date().toLocaleTimeString('en-IN', {
+        timeZone: 'Asia/Kolkata',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: true
+      });
+
       io.to(roomId).emit('receive-message', {
         text: data.text,
         senderId: socket.id,
         senderName: data.senderName,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: istTime
       });
     }
   });
