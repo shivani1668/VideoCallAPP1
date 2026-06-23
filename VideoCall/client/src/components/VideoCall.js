@@ -51,6 +51,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
   const candidateQueues = useRef({});
   const chatEndRef = useRef(null);
 
+  // Instant scroll on open, smooth scroll on new message
   useEffect(() => {
     if (isChatOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -64,6 +65,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     }
   }, [messages, isChatOpen]);
 
+  // Handle Visibility Change
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -130,7 +132,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         if (peersRef.current[user.socketId]) return;
         setRemoteUsers(prev => {
           if (prev.find(u => u.socketId === user.socketId)) return prev;
-          return [...prev, { socketId: user.socketId, userName: user.userName, stream: null, joinedAt: Date.now() }];
+          return [...prev, { socketId: user.socketId, userName: user.userName, stream: null, joinedAt: Date.now(), isMuted: false }];
         });
         const pc = createPeer(user.socketId, user.userName, true);
         peersRef.current[user.socketId] = pc;
@@ -141,10 +143,16 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
       if (peersRef.current[socketId]) return;
       setRemoteUsers(prev => {
         if (prev.find(u => u.socketId === socketId)) return prev;
-        return [...prev, { socketId, userName, stream: null, joinedAt: Date.now() }];
+        return [...prev, { socketId: socketId, userName, stream: null, joinedAt: Date.now(), isMuted: false }];
       });
       const pc = createPeer(socketId, userName, false);
       peersRef.current[socketId] = pc;
+    });
+
+    socket.on('user-mute-status', ({ socketId, isMuted }) => {
+      setRemoteUsers(prev => prev.map(u =>
+        u.socketId === socketId ? { ...u, isMuted } : u
+      ));
     });
 
     socket.on('receive-message', (msg) => {
@@ -200,6 +208,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     return () => {
       socket.off('all-users');
       socket.off('user-joined');
+      socket.off('user-mute-status');
       socket.off('receive-message');
       socket.off('offer');
       socket.off('answer');
@@ -266,21 +275,30 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     onLeave();
   };
 
+  const toggleMic = () => {
+    if (localStreamRef.current) {
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = !audioTrack.enabled;
+        const newMuteStatus = !audioTrack.enabled;
+        setIsMicOn(audioTrack.enabled);
+
+        // Notify others about mute status
+        if (socket) {
+          socket.emit('toggle-mute', { roomId, isMuted: newMuteStatus });
+        }
+      }
+    }
+  };
+
   return (
     <div className="video-call-container">
       <div className="main-content">
         <div className="video-section">
-          <div className="header-info">
-            <div className="logo-section">
-               <img src="/logo.png" alt="Logo" className="nav-logo" />
-               <h1>FaceLink</h1>
-            </div>
-            <div className="status-bar">{connectionStatus}</div>
-          </div>
           <div className="videos-grid">
             <div className={`video-wrapper ${isMirrored ? 'mirrored' : ''}`}>
               <div className="video-header">
-                <h3>You ({userName})</h3>
+                <h3>You ({userName}) {!isMicOn && <span className="mute-indicator">🔇</span>}</h3>
                 <DurationTimer startTime={roomStartTime} />
               </div>
               <video ref={localVideoRef} autoPlay muted playsInline />
@@ -325,10 +343,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
           <div className="user-count-badge">👥 {remoteUsers.length + 1}</div>
         </div>
         <div className="center-controls">
-          <button className={`footer-btn ${!isMicOn ? 'off' : ''}`} onClick={() => {
-            localStreamRef.current.getAudioTracks()[0].enabled = !isMicOn;
-            setIsMicOn(!isMicOn);
-          }}>
+          <button className={`footer-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>
             {isMicOn ? '🎤' : '🔇'}
           </button>
           <button className={`footer-btn ${!isVideoOn ? 'off' : ''}`} onClick={() => {
@@ -363,7 +378,7 @@ const RemoteVideo = ({ user }) => {
   return (
     <div className="video-wrapper">
       <div className="video-header">
-        <h3>{user.userName}</h3>
+        <h3>{user.userName} {user.isMuted && <span className="mute-indicator">🔇</span>}</h3>
         <DurationTimer startTime={user.joinedAt} />
       </div>
       {!user.stream && <div className="loading-spinner">Connecting...</div>}
