@@ -23,7 +23,10 @@ function App() {
     return (
       <div className="login-container">
         <div className="login-card">
-          <h1>Video Call Pro</h1>
+          <div className="logo-wrapper">
+             <img src="/logo.png" alt="FaceLink Logo" className="app-logo" />
+          </div>
+          <h1>FaceLink</h1>
           <form onSubmit={handleJoin}>
             <div className="input-group">
               <label>Your Name</label>
