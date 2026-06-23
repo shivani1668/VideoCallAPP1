@@ -270,6 +270,13 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     <div className="video-call-container">
       <div className="main-content">
         <div className="video-section">
+          <div className="header-info">
+            <div className="logo-section">
+               <img src="/logo.png" alt="Logo" className="nav-logo" />
+               <h1>FaceLink</h1>
+            </div>
+            <div className="status-bar">{connectionStatus}</div>
+          </div>
           <div className="videos-grid">
             <div className={`video-wrapper ${isMirrored ? 'mirrored' : ''}`}>
               <div className="video-header">
