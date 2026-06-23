@@ -6,27 +6,6 @@
   background-color: #121212;
   color: white;
   font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-  position: relative;
-}
-
-.corner-logo {
-  position: absolute;
-  top: 30px;
-  left: 40px;
-  display: flex;
-  align-items: center;
-  gap: 15px;
-}
-
-.app-logo-small {
-  width: 40px;
-  height: auto;
-}
-
-.brand-name {
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: 1px;
 }
 
 .login-card {
@@ -37,7 +16,15 @@
   width: 100%;
   max-width: 400px;
   text-align: center;
-  z-index: 1;
+}
+
+.logo-wrapper {
+  margin-bottom: 20px;
+}
+
+.app-logo-large {
+  width: 150px;
+  height: auto;
 }
 
 h1 {
@@ -96,16 +83,3 @@ input {
 
 .primary-btn:hover { background: #0056b3; }
 .secondary-btn:hover { background: rgba(0, 123, 255, 0.1); }
-
-@media (max-width: 600px) {
-  .corner-logo {
-    top: 20px;
-    left: 20px;
-  }
-  .brand-name {
-    font-size: 1.2rem;
-  }
-  .app-logo-small {
-    width: 30px;
-  }
-}
