@@ -58,6 +58,14 @@ io.on('connection', (socket) => {
     }
   });
 
+  // Handle mute/unmute status
+  socket.on('toggle-mute', ({ roomId, isMuted }) => {
+    socket.to(roomId).emit('user-mute-status', {
+      socketId: socket.id,
+      isMuted
+    });
+  });
+
   socket.on('offer', (data) => {
     io.to(data.to).emit('offer', {
       from: socket.id,
