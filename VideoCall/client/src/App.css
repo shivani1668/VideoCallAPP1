@@ -20,7 +20,17 @@
 
 h1 {
   margin-bottom: 30px;
-  font-weight: 300;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+
+.logo-wrapper {
+  margin-bottom: 20px;
+}
+
+.app-logo {
+  width: 120px;
+  height: auto;
 }
 
 .input-group {
