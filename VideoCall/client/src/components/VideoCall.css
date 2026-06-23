@@ -237,6 +237,10 @@ h1 {
   flex-direction: column;
 }
 
+.video-wrapper.mirrored video {
+  transform: scaleX(-1);
+}
+
 /* On Desktop: keep widescreen aspect ratio */
 @media (min-width: 801px) {
   .video-wrapper {
