@@ -253,17 +253,32 @@ h1 {
   top: 0;
   left: 0;
   right: 0;
-  padding: 15px;
+  padding: 12px 15px;
   background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
   z-index: 2;
-  text-align: left;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
 }
 
 .video-header h3 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1rem;
   font-weight: 400;
   color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70%;
+}
+
+.duration-text {
+  font-size: 0.85rem;
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(0, 0, 0, 0.4);
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: monospace;
 }
 
 video {
