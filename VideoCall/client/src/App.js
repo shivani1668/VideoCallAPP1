@@ -22,11 +22,12 @@ function App() {
   if (!joined) {
     return (
       <div className="login-container">
+        <div className="corner-logo">
+           <img src="/logo.png" alt="FaceLink Logo" className="app-logo-small" />
+           <span className="brand-name">FaceLink</span>
+        </div>
         <div className="login-card">
-          <div className="logo-wrapper">
-             <img src="/logo.png" alt="FaceLink Logo" className="app-logo" />
-          </div>
-          <h1>FaceLink</h1>
+          <h1>Welcome</h1>
           <form onSubmit={handleJoin}>
             <div className="input-group">
               <label>Your Name</label>
