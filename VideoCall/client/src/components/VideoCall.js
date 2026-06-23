@@ -2,15 +2,43 @@ import React, { useEffect, useRef, useState } from 'react';
 import io from 'socket.io-client';
 import './VideoCall.css';
 
+// Helper to format duration in seconds to MM:SS
+const formatDuration = (seconds) => {
+  if (isNaN(seconds) || seconds < 0) return '00:00';
+  const hrs = Math.floor(seconds / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+
+  if (hrs > 0) {
+    return `${hrs}:${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  }
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
+// Timer Component to show duration
+const DurationTimer = ({ startTime }) => {
+  const [elapsed, setElapsed] = useState(0);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [startTime]);
+
+  return <span className="duration-text">{formatDuration(elapsed)}</span>;
+};
+
 const VideoCall = ({ userName, roomId, onLeave }) => {
   const [socket, setSocket] = useState(null);
   const [remoteUsers, setRemoteUsers] = useState([]);
   const [connectionStatus, setConnectionStatus] = useState('Initializing...');
+  const [roomStartTime] = useState(Date.now());
 
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
   const [isMirrored, setIsMirrored] = useState(true);
-  const [facingMode, setFacingMode] = useState('user'); // 'user' or 'environment'
+  const [facingMode, setFacingMode] = useState('user');
 
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
@@ -23,7 +51,6 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
   const candidateQueues = useRef({});
   const chatEndRef = useRef(null);
 
-  // Instant scroll on open, smooth scroll on new message
   useEffect(() => {
     if (isChatOpen) {
       chatEndRef.current?.scrollIntoView({ behavior: 'auto' });
@@ -37,7 +64,6 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     }
   }, [messages, isChatOpen]);
 
-  // Handle Visibility Change
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
@@ -54,7 +80,6 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
 
   const getLocalStream = async (mode = 'user') => {
     try {
-      // Stop existing tracks if any
       if (localStreamRef.current) {
         localStreamRef.current.getTracks().forEach(track => track.stop());
       }
@@ -67,22 +92,16 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
       localStreamRef.current = stream;
       if (localVideoRef.current) localVideoRef.current.srcObject = stream;
 
-      // Update tracks for all active peers
-      const videoTrack = stream.getVideoTracks()[0];
-      const audioTrack = stream.getAudioTracks()[0];
-
       Object.values(peersRef.current).forEach(pc => {
         const senders = pc.getSenders();
         const vSender = senders.find(s => s.track && s.track.kind === 'video');
         const aSender = senders.find(s => s.track && s.track.kind === 'audio');
-
-        if (vSender) vSender.replaceTrack(videoTrack);
-        if (aSender) aSender.replaceTrack(audioTrack);
+        if (vSender) vSender.replaceTrack(stream.getVideoTracks()[0]);
+        if (aSender) aSender.replaceTrack(stream.getAudioTracks()[0]);
       });
 
       return stream;
     } catch (e) {
-      console.error("Media error", e);
       setConnectionStatus('Camera Error');
     }
   };
@@ -90,7 +109,6 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
   useEffect(() => {
     const init = async () => {
       await getLocalStream(facingMode);
-
       const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
       const newSocket = io(serverUrl);
       setSocket(newSocket);
@@ -112,7 +130,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         if (peersRef.current[user.socketId]) return;
         setRemoteUsers(prev => {
           if (prev.find(u => u.socketId === user.socketId)) return prev;
-          return [...prev, { socketId: user.socketId, userName: user.userName, stream: null }];
+          return [...prev, { socketId: user.socketId, userName: user.userName, stream: null, joinedAt: Date.now() }];
         });
         const pc = createPeer(user.socketId, user.userName, true);
         peersRef.current[user.socketId] = pc;
@@ -123,7 +141,7 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
       if (peersRef.current[socketId]) return;
       setRemoteUsers(prev => {
         if (prev.find(u => u.socketId === socketId)) return prev;
-        return [...prev, { socketId, userName, stream: null }];
+        return [...prev, { socketId, userName, stream: null, joinedAt: Date.now() }];
       });
       const pc = createPeer(socketId, userName, false);
       peersRef.current[socketId] = pc;
@@ -254,7 +272,10 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         <div className="video-section">
           <div className="videos-grid">
             <div className={`video-wrapper ${isMirrored ? 'mirrored' : ''}`}>
-              <div className="video-header"><h3>You ({userName})</h3></div>
+              <div className="video-header">
+                <h3>You ({userName})</h3>
+                <DurationTimer startTime={roomStartTime} />
+              </div>
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
             {remoteUsers.map(user => (
@@ -309,17 +330,8 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
           }}>
             {isVideoOn ? '📹' : '❌'}
           </button>
-
-          {/* Camera Flip Button */}
-          <button className="footer-btn" onClick={switchCamera} title="Switch Camera">
-            🔄
-          </button>
-
-          {/* Mirror Flip Button */}
-          <button className={`footer-btn ${isMirrored ? 'active' : ''}`} onClick={() => setIsMirrored(!isMirrored)} title="Mirror View">
-            🪞
-          </button>
-
+          <button className="footer-btn" onClick={switchCamera} title="Switch Camera">🔄</button>
+          <button className={`footer-btn ${isMirrored ? 'active' : ''}`} onClick={() => setIsMirrored(!isMirrored)} title="Mirror View">🪞</button>
           <button className="footer-btn end" onClick={handleLeave}>📞</button>
         </div>
         <div className="right-controls">
@@ -343,7 +355,10 @@ const RemoteVideo = ({ user }) => {
 
   return (
     <div className="video-wrapper">
-      <div className="video-header"><h3>{user.userName}</h3></div>
+      <div className="video-header">
+        <h3>{user.userName}</h3>
+        <DurationTimer startTime={user.joinedAt} />
+      </div>
       {!user.stream && <div className="loading-spinner">Connecting...</div>}
       <video ref={videoRef} autoPlay playsInline />
     </div>
