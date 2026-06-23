@@ -208,6 +208,32 @@ h1 {
   margin-bottom: 40px;
 }
 
+.header-info {
+  margin-bottom: 30px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  max-width: 1400px;
+}
+
+.logo-section {
+  display: flex;
+  align-items: center;
+  gap: 15px;
+}
+
+.nav-logo {
+  width: 40px;
+  height: auto;
+}
+
+.logo-section h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+}
+
 .status-bar {
   background: var(--surface-color);
   padding: 8px 16px;
