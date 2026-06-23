@@ -5,12 +5,13 @@ import './VideoCall.css';
 const VideoCall = ({ userName, roomId, onLeave }) => {
   const [socket, setSocket] = useState(null);
   const [remoteUsers, setRemoteUsers] = useState([]);
-  const [connectionStatus, setConnectionStatus] = useState('Initializing Media...');
+  const [connectionStatus, setConnectionStatus] = useState('Initializing...');
 
   const [isMicOn, setIsMicOn] = useState(true);
   const [isVideoOn, setIsVideoOn] = useState(true);
+  const [isMirrored, setIsMirrored] = useState(true);
+  const [facingMode, setFacingMode] = useState('user'); // 'user' or 'environment'
 
-  // Chat States
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState('');
   const [isChatOpen, setIsChatOpen] = useState(false);
@@ -22,69 +23,114 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
   const candidateQueues = useRef({});
   const chatEndRef = useRef(null);
 
-  // Auto-scroll chat
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Reset unread count when chat is opened
+  // Instant scroll on open, smooth scroll on new message
   useEffect(() => {
     if (isChatOpen) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'auto' });
       setUnreadCount(0);
     }
   }, [isChatOpen]);
 
-  // 1. Setup Local Stream FIRST
   useEffect(() => {
-    const getLocalStream = async () => {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-        localStreamRef.current = stream;
-        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+    if (isChatOpen && messages.length > 0) {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isChatOpen]);
 
-        setConnectionStatus('Connecting...');
-        const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
-        const newSocket = io(serverUrl);
-        setSocket(newSocket);
-
-        newSocket.on('connect', () => {
-          setConnectionStatus('Room: ' + roomId);
-          newSocket.emit('join-room', { roomId, userName });
-        });
-
-      } catch (e) {
-        console.error("Media error", e);
-        setConnectionStatus('Camera Error');
+  // Handle Visibility Change
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (localStreamRef.current) {
+          localStreamRef.current.getTracks().forEach(track => {
+            track.enabled = true;
+          });
+        }
       }
     };
-    getLocalStream();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, []);
 
-    return () => {
-      if (socket) socket.disconnect();
+  const getLocalStream = async (mode = 'user') => {
+    try {
+      // Stop existing tracks if any
+      if (localStreamRef.current) {
+        localStreamRef.current.getTracks().forEach(track => track.stop());
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: mode },
+        audio: true
+      });
+
+      localStreamRef.current = stream;
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
+
+      // Update tracks for all active peers
+      const videoTrack = stream.getVideoTracks()[0];
+      const audioTrack = stream.getAudioTracks()[0];
+
+      Object.values(peersRef.current).forEach(pc => {
+        const senders = pc.getSenders();
+        const vSender = senders.find(s => s.track && s.track.kind === 'video');
+        const aSender = senders.find(s => s.track && s.track.kind === 'audio');
+
+        if (vSender) vSender.replaceTrack(videoTrack);
+        if (aSender) aSender.replaceTrack(audioTrack);
+      });
+
+      return stream;
+    } catch (e) {
+      console.error("Media error", e);
+      setConnectionStatus('Camera Error');
+    }
+  };
+
+  useEffect(() => {
+    const init = async () => {
+      await getLocalStream(facingMode);
+
+      const serverUrl = process.env.REACT_APP_SERVER_URL || 'http://localhost:5000';
+      const newSocket = io(serverUrl);
+      setSocket(newSocket);
+
+      newSocket.on('connect', () => {
+        setConnectionStatus('Room: ' + roomId);
+        newSocket.emit('join-room', { roomId, userName });
+      });
     };
+    init();
+    return () => { if (socket) socket.disconnect(); };
   }, [roomId, userName]);
 
-  // 2. Signaling & Chat Logic
   useEffect(() => {
     if (!socket) return;
 
     socket.on('all-users', (users) => {
       users.forEach(user => {
-        setRemoteUsers(prev => [...prev, { socketId: user.socketId, userName: user.userName, stream: null }]);
+        if (peersRef.current[user.socketId]) return;
+        setRemoteUsers(prev => {
+          if (prev.find(u => u.socketId === user.socketId)) return prev;
+          return [...prev, { socketId: user.socketId, userName: user.userName, stream: null }];
+        });
         const pc = createPeer(user.socketId, user.userName, true);
         peersRef.current[user.socketId] = pc;
       });
     });
 
     socket.on('user-joined', ({ socketId, userName }) => {
-      setRemoteUsers(prev => [...prev, { socketId, userName, stream: null }]);
+      if (peersRef.current[socketId]) return;
+      setRemoteUsers(prev => {
+        if (prev.find(u => u.socketId === socketId)) return prev;
+        return [...prev, { socketId, userName, stream: null }];
+      });
       const pc = createPeer(socketId, userName, false);
       peersRef.current[socketId] = pc;
     });
 
     socket.on('receive-message', (msg) => {
       setMessages(prev => [...prev, msg]);
-      // Increment unread count if chat is closed and message is not from self
       if (!isChatOpen && msg.senderName !== userName) {
         setUnreadCount(prev => prev + 1);
       }
@@ -187,29 +233,18 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
     }
   };
 
-  const toggleMic = () => {
-    if (localStreamRef.current) {
-      const audioTrack = localStreamRef.current.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsMicOn(audioTrack.enabled);
-      }
-    }
-  };
-
-  const toggleVideo = () => {
-    if (localStreamRef.current) {
-      const videoTrack = localStreamRef.current.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoOn(videoTrack.enabled);
-      }
-    }
+  const switchCamera = async () => {
+    const newMode = facingMode === 'user' ? 'environment' : 'user';
+    setFacingMode(newMode);
+    await getLocalStream(newMode);
   };
 
   const handleLeave = () => {
     if (socket) socket.emit('leave-room');
     Object.values(peersRef.current).forEach(pc => pc.close());
+    if (localStreamRef.current) {
+      localStreamRef.current.getTracks().forEach(t => t.stop());
+    }
     onLeave();
   };
 
@@ -218,20 +253,16 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
       <div className="main-content">
         <div className="video-section">
           <div className="videos-grid">
-            {/* Local Video */}
-            <div className="video-wrapper">
+            <div className={`video-wrapper ${isMirrored ? 'mirrored' : ''}`}>
               <div className="video-header"><h3>You ({userName})</h3></div>
               <video ref={localVideoRef} autoPlay muted playsInline />
             </div>
-
-            {/* Remote Videos */}
             {remoteUsers.map(user => (
               <RemoteVideo key={user.socketId} user={user} />
             ))}
           </div>
         </div>
 
-        {/* Chat Sidebar */}
         {isChatOpen && (
           <div className="chat-sidebar">
             <div className="chat-header">
@@ -260,26 +291,39 @@ const VideoCall = ({ userName, roomId, onLeave }) => {
         )}
       </div>
 
-      {/* Footer Controls */}
       <div className="footer-bar">
         <div className="left-info">
           <div className="room-info-footer">{connectionStatus}</div>
           <div className="user-count-badge">👥 {remoteUsers.length + 1}</div>
         </div>
         <div className="center-controls">
-          <button className={`footer-btn ${!isMicOn ? 'off' : ''}`} onClick={toggleMic}>
+          <button className={`footer-btn ${!isMicOn ? 'off' : ''}`} onClick={() => {
+            localStreamRef.current.getAudioTracks()[0].enabled = !isMicOn;
+            setIsMicOn(!isMicOn);
+          }}>
             {isMicOn ? '🎤' : '🔇'}
           </button>
-          <button className={`footer-btn ${!isVideoOn ? 'off' : ''}`} onClick={toggleVideo}>
+          <button className={`footer-btn ${!isVideoOn ? 'off' : ''}`} onClick={() => {
+            localStreamRef.current.getVideoTracks()[0].enabled = !isVideoOn;
+            setIsVideoOn(!isVideoOn);
+          }}>
             {isVideoOn ? '📹' : '❌'}
           </button>
+
+          {/* Camera Flip Button */}
+          <button className="footer-btn" onClick={switchCamera} title="Switch Camera">
+            🔄
+          </button>
+
+          {/* Mirror Flip Button */}
+          <button className={`footer-btn ${isMirrored ? 'active' : ''}`} onClick={() => setIsMirrored(!isMirrored)} title="Mirror View">
+            🪞
+          </button>
+
           <button className="footer-btn end" onClick={handleLeave}>📞</button>
         </div>
         <div className="right-controls">
-          <button
-            className={`footer-btn chat-toggle-btn ${isChatOpen ? 'active' : ''}`}
-            onClick={() => setIsChatOpen(!isChatOpen)}
-          >
+          <button className={`footer-btn chat-toggle-btn ${isChatOpen ? 'active' : ''}`} onClick={() => setIsChatOpen(!isChatOpen)}>
             💬
             {unreadCount > 0 && <span className="unread-badge">{unreadCount}</span>}
           </button>
@@ -300,7 +344,7 @@ const RemoteVideo = ({ user }) => {
   return (
     <div className="video-wrapper">
       <div className="video-header"><h3>{user.userName}</h3></div>
-      {!user.stream && <div className="loading-spinner">Connecting Video...</div>}
+      {!user.stream && <div className="loading-spinner">Connecting...</div>}
       <video ref={videoRef} autoPlay playsInline />
     </div>
   );
