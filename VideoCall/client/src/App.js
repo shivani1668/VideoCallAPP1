@@ -6,6 +6,7 @@ function App() {
   const [userName, setUserName] = useState('');
   const [roomId, setRoomId] = useState('');
   const [joined, setJoined] = useState(false);
+  const [showInstructions, setShowInstructions] = useState(false);
 
   const handleJoin = (e) => {
     e.preventDefault();
@@ -22,6 +23,46 @@ function App() {
   if (!joined) {
     return (
       <div className="login-container">
+        <button
+          className="instructions-toggle"
+          onClick={() => setShowInstructions(!showInstructions)}
+          aria-label="Toggle Instructions"
+        >
+          {showInstructions ? '✕' : 'ℹ Instructions'}
+        </button>
+
+        {showInstructions && (
+          <div className="instructions-overlay" onClick={() => setShowInstructions(false)}>
+            <div className="instructions-content" onClick={(e) => e.stopPropagation()}>
+              <h2>How to use FaceLink</h2>
+              <div className="instruction-item">
+                <span className="icon">💡</span>
+                <div>
+                  <strong>New here?</strong>
+                  <p>Click "New" to generate a unique Room ID for your meeting.</p>
+                </div>
+              </div>
+              <div className="instruction-item">
+                <span className="icon">🔗</span>
+                <div>
+                  <strong>Joining?</strong>
+                  <p>Paste the ID provided by your friend to enter their room.</p>
+                </div>
+              </div>
+              <div className="instruction-item">
+                <span className="icon">📱</span>
+                <div>
+                  <strong>Mobile Users</strong>
+                  <p>Scroll down after joining to access call controls and chat.</p>
+                </div>
+              </div>
+              <button className="close-instructions-btn" onClick={() => setShowInstructions(false)}>
+                Got it!
+              </button>
+            </div>
+          </div>
+        )}
+
         <div className="login-card">
           <div className="logo-wrapper">
              <img src="/logo.png" alt="FaceLink Logo" className="app-logo-large" />
